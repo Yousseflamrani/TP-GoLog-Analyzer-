@@ -8,12 +8,12 @@ import (
 	"path/filepath"
 )
 
-// ExportAnalysisToJSON exporte les résultats d'analyse vers un fichier JSON
-func ExportAnalysisToJSON(filePath string, results *analyser.GlobalAnalysisResult) error {
-	// Créer le répertoire parent si nécessaire
-	dir := filepath.Dir(filePath)
+// ExportAnalysisToJSON exporte les résultats vers un fichier JSON (selon le TP)
+func ExportAnalysisToJSON(outputPath string, results []analyser.LogResult) error {
+	// BONUS: Créer les répertoires parent si nécessaire
+	dir := filepath.Dir(outputPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("impossible de créer le répertoire %s: %w", dir, err)
+		return fmt.Errorf("impossible de créer les répertoires %s: %w", dir, err)
 	}
 
 	// Sérialiser en JSON avec indentation
@@ -23,57 +23,32 @@ func ExportAnalysisToJSON(filePath string, results *analyser.GlobalAnalysisResul
 	}
 
 	// Écrire dans le fichier
-	if err := os.WriteFile(filePath, data, 0644); err != nil {
-		return fmt.Errorf("impossible d'écrire dans le fichier %s: %w", filePath, err)
+	if err := os.WriteFile(outputPath, data, 0644); err != nil {
+		return fmt.Errorf("impossible d'écrire dans le fichier %s: %w", outputPath, err)
 	}
 
 	return nil
 }
 
-// ExportAnalysisToCSV exporte un résumé vers CSV
-func ExportAnalysisToCSV(filePath string, results *analyser.GlobalAnalysisResult) error {
-	// Créer le répertoire parent si nécessaire
-	dir := filepath.Dir(filePath)
+// ExportResultsToCSV exporte un résumé vers CSV (bonus)
+func ExportResultsToCSV(outputPath string, results []analyser.LogResult) error {
+	dir := filepath.Dir(outputPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("impossible de créer le répertoire %s: %w", dir, err)
+		return fmt.Errorf("impossible de créer les répertoires %s: %w", dir, err)
 	}
 
 	// Construire le contenu CSV
-	csvContent := "SourceID,SourceType,TotalLines,ParsedLines,ErrorLines,Duration\n"
+	csvContent := "LogID,FilePath,Status,Message,ErrorDetails\n"
 
-	for _, source := range results.SourceResults {
-		if source.Error == nil {
-			csvContent += fmt.Sprintf("%s,%s,%d,%d,%d,%v\n",
-				source.SourceID, source.SourceType, source.TotalLines,
-				source.ParsedLines, source.ErrorLines, source.Duration)
-		} else {
-			csvContent += fmt.Sprintf("%s,%s,0,0,0,ERROR: %v\n",
-				source.SourceID, source.SourceType, source.Error)
-		}
+	for _, result := range results {
+		csvContent += fmt.Sprintf("%s,%s,%s,%s,%s\n",
+			result.LogID, result.FilePath, result.Status,
+			result.Message, result.ErrorDetails)
 	}
 
 	// Écrire dans le fichier
-	if err := os.WriteFile(filePath, []byte(csvContent), 0644); err != nil {
-		return fmt.Errorf("impossible d'écrire dans le fichier %s: %w", filePath, err)
-	}
-
-	return nil
-}
-
-// ExportSourceAnalysis exporte l'analyse d'une source spécifique
-func ExportSourceAnalysis(filePath string, result *analyser.SourceAnalysisResult) error {
-	dir := filepath.Dir(filePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("impossible de créer le répertoire %s: %w", dir, err)
-	}
-
-	data, err := json.MarshalIndent(result, "", "  ")
-	if err != nil {
-		return fmt.Errorf("impossible de sérialiser le résultat: %w", err)
-	}
-
-	if err := os.WriteFile(filePath, data, 0644); err != nil {
-		return fmt.Errorf("impossible d'écrire dans le fichier %s: %w", filePath, err)
+	if err := os.WriteFile(outputPath, []byte(csvContent), 0644); err != nil {
+		return fmt.Errorf("impossible d'écrire dans le fichier %s: %w", outputPath, err)
 	}
 
 	return nil

@@ -1,39 +1,62 @@
 package analyser
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
-// ParseError erreur de parsing personnalisée
+// FileNotFoundError erreur personnalisée pour fichier introuvable
+type FileNotFoundError struct {
+	Path string
+	Err  error
+}
+
+func (e *FileNotFoundError) Error() string {
+	return fmt.Sprintf("fichier introuvable: %s (%v)", e.Path, e.Err)
+}
+
+func (e *FileNotFoundError) Unwrap() error {
+	return e.Err
+}
+
+// FileAccessError erreur personnalisée pour fichier inaccessible
+type FileAccessError struct {
+	Path string
+	Err  error
+}
+
+func (e *FileAccessError) Error() string {
+	return fmt.Sprintf("fichier inaccessible: %s (%v)", e.Path, e.Err)
+}
+
+func (e *FileAccessError) Unwrap() error {
+	return e.Err
+}
+
+// ParseError erreur personnalisée pour erreur de parsing
 type ParseError struct {
-	Line       int
-	Content    string
-	Reason     string
-	ParserType string
-	SourceID   string
+	LogID   string
+	Message string
 }
 
 func (e *ParseError) Error() string {
-	return fmt.Sprintf("erreur de parsing ligne %d dans %s (%s): %s",
-		e.Line, e.SourceID, e.ParserType, e.Reason)
+	return fmt.Sprintf("erreur de parsing pour %s: %s", e.LogID, e.Message)
 }
 
-// NewParseError crée une nouvelle erreur de parsing
-func NewParseError(line int, content, reason, parserType, sourceID string) *ParseError {
-	return &ParseError{
-		Line:       line,
-		Content:    content,
-		Reason:     reason,
-		ParserType: parserType,
-		SourceID:   sourceID,
-	}
+// IsFileNotFound vérifie si l'erreur est de type FileNotFoundError
+func IsFileNotFound(err error) bool {
+	var fileNotFoundErr *FileNotFoundError
+	return errors.As(err, &fileNotFoundErr)
 }
 
-// SourceError erreur liée à une source de log
-type SourceError struct {
-	SourceID   string
-	SourcePath string
-	Reason     string
+// IsFileAccess vérifie si l'erreur est de type FileAccessError
+func IsFileAccess(err error) bool {
+	var fileAccessErr *FileAccessError
+	return errors.As(err, &fileAccessErr)
 }
 
-func (e *SourceError) Error() string {
-	return fmt.Sprintf("erreur source %s (%s): %s", e.SourceID, e.SourcePath, e.Reason)
+// IsParseError vérifie si l'erreur est de type ParseError
+func IsParseError(err error) bool {
+	var parseErr *ParseError
+	return errors.As(err, &parseErr)
 }

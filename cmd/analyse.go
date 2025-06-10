@@ -7,213 +7,154 @@ import (
 	"github.com/axellelanca/go_loganizer/internal/reporter"
 	"github.com/spf13/cobra"
 	"sync"
+	"time"
 )
 
 var (
-	configFile  string
-	outputFile  string
-	maxWorkers  int
-	verbose     bool
-	filterLevel string
-	filterType  string
-	specificID  string
+	configPath   string
+	outputPath   string
+	statusFilter string
 )
 
 var analyseCmd = &cobra.Command{
 	Use:   "analyse",
 	Short: "Analyse les fichiers de logs définis dans la configuration.",
-	Long:  `La commande 'analyse' parse les fichiers de logs configurés et extrait des statistiques, erreurs, et patterns.`,
+	Long:  `La commande 'analyse' parse les fichiers de logs configurés et simule l'analyse avec gestion d'erreurs.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if configFile == "" {
-			fmt.Println("Erreur: le fichier de configuration (--config) est obligatoire.")
+		if configPath == "" {
+			fmt.Println("❌ Erreur: le fichier de configuration (--config) est obligatoire.")
 			return
 		}
 
 		// Charger la configuration des logs
-		logSources, err := config.LoadLogSourcesFromFile(configFile)
+		logConfigs, err := config.LoadLogSourcesFromFile(configPath)
 		if err != nil {
 			fmt.Printf("❌ Erreur lors du chargement de la configuration: %v\n", err)
 			return
 		}
 
-		if len(logSources) == 0 {
-			fmt.Println("⚠️  Aucune source de log trouvée dans la configuration.")
+		if len(logConfigs) == 0 {
+			fmt.Println("⚠️  Aucune configuration de log trouvée.")
 			return
 		}
 
-		// Filtrer les sources si nécessaire
-		filteredSources := filterLogSources(logSources, filterType, specificID)
+		fmt.Printf("🚀 Analyse de %d fichiers de logs en parallèle...\n\n", len(logConfigs))
 
-		if verbose {
-			fmt.Printf("🔍 Analyse de %d sources de logs\n", len(filteredSources))
-			fmt.Printf("⚡ Nombre de workers: %d\n", maxWorkers)
-		}
+		// Analyser les logs en parallèle
+		results := analyzeLogsParallel(logConfigs)
 
-		// Lancer l'analyse de toutes les sources
-		results, err := analyseMultipleLogSources(filteredSources, maxWorkers, verbose, filterLevel)
-		if err != nil {
-			fmt.Printf("❌ Erreur lors de l'analyse: %v\n", err)
-			return
+		// Filtrer les résultats si nécessaire
+		if statusFilter != "" {
+			results = filterResultsByStatus(results, statusFilter)
 		}
 
 		// Afficher les résultats
-		displayResults(results, verbose)
+		displayResults(results)
 
 		// Exporter si demandé
-		if outputFile != "" {
-			err := reporter.ExportAnalysisToJSON(outputFile, results)
+		if outputPath != "" {
+			// BONUS: Horodatage des exports
+			finalOutputPath := addTimestampToFilename(outputPath)
+
+			err := reporter.ExportAnalysisToJSON(finalOutputPath, results)
 			if err != nil {
 				fmt.Printf("❌ Erreur lors de l'exportation: %v\n", err)
 			} else {
-				fmt.Printf("✅ Résultats exportés vers %s\n", outputFile)
+				fmt.Printf("✅ Résultats exportés vers %s\n", finalOutputPath)
 			}
 		}
 	},
 }
 
-func filterLogSources(sources []config.LogSource, typeFilter, idFilter string) []config.LogSource {
-	var filtered []config.LogSource
+// analyzeLogsParallel traite tous les logs en parallèle avec goroutines
+func analyzeLogsParallel(logConfigs []config.LogSource) []analyser.LogResult {
+	var wg sync.WaitGroup
+	resultsChan := make(chan analyser.LogResult, len(logConfigs))
 
-	for _, source := range sources {
-		// Filtrer par ID si spécifié
-		if idFilter != "" && source.ID != idFilter {
-			continue
-		}
+	// Lancer une goroutine pour chaque log
+	for _, logConfig := range logConfigs {
+		wg.Add(1)
+		go func(cfg config.LogSource) {
+			defer wg.Done()
 
-		// Filtrer par type si spécifié
-		if typeFilter != "" && source.Type != typeFilter {
-			continue
-		}
-
-		filtered = append(filtered, source)
+			// Analyser le log avec simulation d'erreurs
+			result := analyser.AnalyzeLog(cfg)
+			resultsChan <- result
+		}(logConfig)
 	}
 
+	// Attendre que toutes les goroutines finissent
+	wg.Wait()
+	close(resultsChan)
+
+	// Collecter tous les résultats
+	var results []analyser.LogResult
+	for result := range resultsChan {
+		results = append(results, result)
+	}
+
+	return results
+}
+
+// filterResultsByStatus filtre les résultats par statut
+func filterResultsByStatus(results []analyser.LogResult, status string) []analyser.LogResult {
+	var filtered []analyser.LogResult
+	for _, result := range results {
+		if result.Status == status {
+			filtered = append(filtered, result)
+		}
+	}
 	return filtered
 }
 
-func analyseMultipleLogSources(sources []config.LogSource, maxWorkers int, verbose bool, filterLevel string) (*analyser.GlobalAnalysisResult, error) {
-	globalResult := analyser.NewGlobalAnalysisResult()
+// displayResults affiche les résultats sur la console
+func displayResults(results []analyser.LogResult) {
+	fmt.Println("📊 === RÉSULTATS D'ANALYSE ===")
 
-	// Utiliser un worker pool pour traiter les sources en parallèle
-	sourceChan := make(chan config.LogSource, len(sources))
-	resultChan := make(chan *analyser.SourceAnalysisResult, len(sources))
+	successCount := 0
+	failedCount := 0
 
-	var wg sync.WaitGroup
-
-	// Lancer les workers
-	numWorkers := maxWorkers
-	if numWorkers > len(sources) {
-		numWorkers = len(sources)
-	}
-
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for source := range sourceChan {
-				result := analyseLogSource(source, filterLevel, verbose)
-				resultChan <- result
-			}
-		}()
-	}
-
-	// Envoyer les sources aux workers
-	go func() {
-		for _, source := range sources {
-			sourceChan <- source
-		}
-		close(sourceChan)
-	}()
-
-	// Collecter les résultats
-	go func() {
-		wg.Wait()
-		close(resultChan)
-	}()
-
-	// Agréger tous les résultats
-	for result := range resultChan {
-		globalResult.AddSourceResult(result)
-	}
-
-	globalResult.Finalize()
-	return globalResult, nil
-}
-
-func analyseLogSource(source config.LogSource, filterLevel string, verbose bool) *analyser.SourceAnalysisResult {
-	if verbose {
-		fmt.Printf("📂 Analyse de %s (%s)...\n", source.ID, source.Path)
-	}
-
-	analyzer := analyser.NewLogAnalyser(source, filterLevel)
-	result := analyzer.AnalyseSource()
-
-	if verbose {
-		if result.Error != nil {
-			fmt.Printf("❌ %s: %v\n", source.ID, result.Error)
+	for _, result := range results {
+		status := "✅"
+		if result.Status == "FAILED" {
+			status = "❌"
+			failedCount++
 		} else {
-			fmt.Printf("✅ %s: %d lignes analysées\n", source.ID, result.TotalLines)
+			successCount++
+		}
+
+		fmt.Printf("%s %s (%s) - %s: %s\n",
+			status, result.LogID, result.FilePath, result.Status, result.Message)
+
+		if result.ErrorDetails != "" {
+			fmt.Printf("   Détails de l'erreur: %s\n", result.ErrorDetails)
 		}
 	}
 
-	return result
+	fmt.Printf("\n📈 Résumé: %d succès, %d échecs sur %d fichiers\n",
+		successCount, failedCount, len(results))
 }
 
-func displayResults(results *analyser.GlobalAnalysisResult, verbose bool) {
-	fmt.Println("\n📈 === RÉSULTATS D'ANALYSE GLOBALE ===")
-	fmt.Printf("📁 Sources analysées: %d\n", results.TotalSources)
-	fmt.Printf("✅ Sources réussies: %d\n", results.SuccessfulSources)
-	fmt.Printf("❌ Sources en erreur: %d\n", results.ErrorSources)
-	fmt.Printf("📄 Lignes totales: %d\n", results.TotalLines)
-	fmt.Printf("⏱️  Temps d'analyse: %v\n", results.AnalysisDuration)
+// addTimestampToFilename ajoute un timestamp au nom de fichier (BONUS)
+func addTimestampToFilename(filename string) string {
+	now := time.Now()
+	timestamp := now.Format("060102") // Format AAMMJJ
 
-	if len(results.LevelStats) > 0 {
-		fmt.Println("\n🏷️  === RÉPARTITION PAR NIVEAU (GLOBAL) ===")
-		for level, count := range results.LevelStats {
-			fmt.Printf("%s: %d\n", level, count)
-		}
+	// Insérer le timestamp avant l'extension
+	if len(filename) > 5 && filename[len(filename)-5:] == ".json" {
+		base := filename[:len(filename)-5]
+		return fmt.Sprintf("%s_%s.json", timestamp, base)
 	}
 
-	if len(results.TypeStats) > 0 {
-		fmt.Println("\n📊 === RÉPARTITION PAR TYPE DE LOG ===")
-		for logType, count := range results.TypeStats {
-			fmt.Printf("%s: %d lignes\n", logType, count)
-		}
-	}
-
-	if len(results.TopErrors) > 0 {
-		fmt.Println("\n🚨 === TOP ERREURS ===")
-		for i, err := range results.TopErrors {
-			if i >= 5 { // Limiter à 5
-				break
-			}
-			fmt.Printf("%d. %s (occurrences: %d, source: %s)\n", i+1, err.Message, err.Count, err.Source)
-		}
-	}
-
-	if verbose && len(results.SourceResults) > 0 {
-		fmt.Println("\n📋 === DÉTAILS PAR SOURCE ===")
-		for _, sourceResult := range results.SourceResults {
-			if sourceResult.Error != nil {
-				fmt.Printf("❌ %s (%s): %v\n", sourceResult.SourceID, sourceResult.SourceType, sourceResult.Error)
-			} else {
-				fmt.Printf("✅ %s (%s): %d lignes, %d erreurs\n",
-					sourceResult.SourceID, sourceResult.SourceType, sourceResult.TotalLines, sourceResult.ErrorLines)
-			}
-		}
-	}
+	return fmt.Sprintf("%s_%s", timestamp, filename)
 }
 
 func init() {
 	rootCmd.AddCommand(analyseCmd)
 
-	analyseCmd.Flags().StringVarP(&configFile, "config", "c", "", "Fichier JSON de configuration des sources de logs")
-	analyseCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Fichier de sortie pour les résultats JSON")
-	analyseCmd.Flags().IntVarP(&maxWorkers, "workers", "w", 4, "Nombre de workers pour le traitement parallèle")
-	analyseCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Mode verbeux")
-	analyseCmd.Flags().StringVarP(&filterLevel, "level", "l", "", "Filtrer par niveau de log (DEBUG, INFO, WARN, ERROR)")
-	analyseCmd.Flags().StringVarP(&filterType, "type", "t", "", "Filtrer par type de log (nginx-access, mysql-error, etc.)")
-	analyseCmd.Flags().StringVarP(&specificID, "id", "i", "", "Analyser uniquement une source spécifique par son ID")
+	analyseCmd.Flags().StringVarP(&configPath, "config", "c", "", "Chemin vers le fichier de configuration JSON (obligatoire)")
+	analyseCmd.Flags().StringVarP(&outputPath, "output", "o", "", "Chemin vers le fichier de sortie JSON (optionnel)")
+	analyseCmd.Flags().StringVar(&statusFilter, "status", "", "Filtrer par statut (OK, FAILED)")
 
 	analyseCmd.MarkFlagRequired("config")
 }
