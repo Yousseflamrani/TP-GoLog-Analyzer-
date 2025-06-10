@@ -1,0 +1,44 @@
+[
+  {
+    "log_id": "db-server-3",
+    "file_path": "",
+    "status": "FAILED",
+    "message": "",
+    "error_details": "fichier introuvable"
+  },
+  {
+    "log_id": "invalid-path",
+    "file_path": "",
+    "status": "FAILED",
+    "message": "",
+    "error_details": "fichier introuvable"
+  },
+  {
+    "log_id": "empty-log",
+    "file_path": "",
+    "status": "OK",
+    "message": "",
+    "error_details": ""
+  },
+  {
+    "log_id": "corrupted-log",
+    "file_path": "",
+    "status": "OK",
+    "message": "",
+    "error_details": ""
+  },
+  {
+    "log_id": "app-backend-2",
+    "file_path": "",
+    "status": "OK",
+    "message": "",
+    "error_details": ""
+  },
+  {
+    "log_id": "web-server-1",
+    "file_path": "",
+    "status": "OK",
+    "message": "",
+    "error_details": ""
+  }
+]
