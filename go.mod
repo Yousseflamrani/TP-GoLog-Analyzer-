@@ -1,4 +1,4 @@
-module github.com/axellelanca/go_loganizer
+module github.com/Yousseflamrani/TP-GoLog-Analyzer-
 
 go 1.24.3
 
